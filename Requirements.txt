@@ -1,1 +1,17 @@
 
+# Port Scanner - requirements.txt
+#
+# This project uses only Python standard library modules.
+# No external packages need to be installed via pip.
+#
+# Minimum Python version: 3.8
+#
+# Standard library modules used:
+#   socket      - TCP/UDP connections and hostname resolution
+#   threading   - Multithreaded port scanning
+#   datetime    - Timestamp generation for reports
+#   tkinter     - Graphical user interface
+#   queue       - Thread-safe result collection
+#
+# To run the application:
+#   python port_scanner.py

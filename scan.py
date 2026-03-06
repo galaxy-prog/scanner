@@ -396,45 +396,13 @@ def create_report():
 # ---------------------------------------------
 
 root = tk.Tk()
-root.title("Port Scanner v1")
-
-# -- Make window fill the screen height but stay scrollable
-SCREEN_H = root.winfo_screenheight()
-WIN_W    = 660
-WIN_H    = min(SCREEN_H - 60, 800)   # never taller than screen
-root.geometry(f"{WIN_W}x{WIN_H}")
+root.title("Port Scanner v2.1")
 root.resizable(True, True)
 
-# -- Scrollable canvas so nothing is hidden on small screens
-canvas = tk.Canvas(root, borderwidth=0)
-scrollbar = ttk.Scrollbar(root, orient="vertical", command=canvas.yview)
-canvas.configure(yscrollcommand=scrollbar.set)
+# -- Simple frame, no canvas, no blank space
+inner = tk.Frame(root)
+inner.pack(fill=tk.BOTH, expand=True)
 
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-# Inner frame placed inside the canvas
-inner = tk.Frame(canvas)
-canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-def on_frame_configure(event):
-    canvas.configure(scrollregion=canvas.bbox("all"))
-
-def on_canvas_configure(event):
-    canvas.itemconfig(canvas_window, width=event.width)
-
-inner.bind("<Configure>", on_frame_configure)
-canvas.bind("<Configure>", on_canvas_configure)
-
-# Mouse wheel scrolling
-def on_mousewheel(event):
-    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-canvas.bind_all("<MouseWheel>", on_mousewheel)       # Windows / macOS
-canvas.bind_all("<Button-4>",   lambda e: canvas.yview_scroll(-1, "units"))  # Linux
-canvas.bind_all("<Button-5>",   lambda e: canvas.yview_scroll( 1, "units"))  # Linux
-
-# -- All widgets go into `inner` from now on
 PAD = {"padx": 8, "pady": 3}
 
 # -- Target frame

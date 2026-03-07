@@ -22,22 +22,31 @@ queue = Queue()     # Thread-safe queue to collect results from worker threads
 scan_running = False  # Flag to allow scan cancellation
 
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
+# THEME CONSTANTS
+# ─────────────────────────────────────────────
+
+BG_DARK    = "#0a0c10"   # deepest background
+BG_MID     = "#111520"   # panel/frame background
+BG_PANEL   = "#161b27"   # labelframe interior
+ACCENT     = "#00ffe7"   # cyan accent
+ACCENT2    = "#7b5ea7"   # purple accent (scan-all button)
+RED_STOP   = "#e84545"   # stop / quit button
+TXT_MAIN   = "#e2e8f0"   # primary text
+TXT_DIM    = "#6b7a99"   # secondary / placeholder text
+ENTRY_BG   = "#0d1117"   # entry backgrounds
+BORDER     = "#1f2d45"   # subtle border colour
+FONT_MONO  = ("Courier New", 9)
+FONT_UI    = ("Consolas", 9)
+FONT_LABEL = ("Consolas", 9, "bold")
+FONT_TITLE = ("Consolas", 13, "bold")
+
+
+# ─────────────────────────────────────────────
 # Core Scanning Functions
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 
 def scan_port(host: str, port: int, timeout: float = 1.0) -> bool:
-    """
-    Attempt a TCP connection to a given host and port.
-
-    Args:
-        host: Target IP address or hostname.
-        port: Port number to probe.
-        timeout: Connection timeout in seconds (default: 1.0).
-
-    Returns:
-        True if the port is open, False otherwise.
-    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         try:
@@ -48,21 +57,6 @@ def scan_port(host: str, port: int, timeout: float = 1.0) -> bool:
 
 
 def scan_udp_port(host: str, port: int, timeout: float = 1.0) -> str:
-    """
-    Attempt a UDP probe to a given host and port.
-
-    UDP scanning is inherently unreliable: no response may mean open|filtered.
-
-    Args:
-        host: Target IP address or hostname.
-        port: Port number to probe.
-        timeout: Socket timeout in seconds (default: 1.0).
-
-    Returns:
-        'open' if a response is received,
-        'closed' if an ICMP port-unreachable is received,
-        'open|filtered' if no response (timeout).
-    """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.settimeout(timeout)
         try:
@@ -70,24 +64,12 @@ def scan_udp_port(host: str, port: int, timeout: float = 1.0) -> str:
             s.recvfrom(1024)
             return "open"
         except socket.timeout:
-            # No response: port may be open or silently filtered
             return "open|filtered"
         except OSError:
-            # ICMP port unreachable -> port is closed
             return "closed"
 
 
 def get_service_name(port: int, protocol: str = "tcp") -> str:
-    """
-    Resolve the well-known service name for a port number.
-
-    Args:
-        port: Port number.
-        protocol: 'tcp' or 'udp'.
-
-    Returns:
-        Service name string, or 'Unknown' if not found.
-    """
     try:
         return socket.getservbyport(port, protocol)
     except OSError:
@@ -95,59 +77,29 @@ def get_service_name(port: int, protocol: str = "tcp") -> str:
 
 
 def resolve_host(host: str) -> str:
-    """
-    Resolve a hostname to an IP address.
-
-    Args:
-        host: Hostname or IP string.
-
-    Returns:
-        Resolved IP address string, or the original string on failure.
-    """
     try:
         return socket.gethostbyname(host)
     except socket.gaierror:
         return host
 
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 # Multithreaded Scan Engine
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 
 def thread_scan(host: str, port: int):
-    """
-    Worker function executed by each scanning thread.
-    Pushes result tuple (port, status) into the shared queue.
-
-    Args:
-        host: Target host.
-        port: Port to scan.
-    """
     timeout = float(entry_timeout.get()) if entry_timeout.get().replace(".", "").isdigit() else 1.0
     status = "open" if scan_port(host, port, timeout) else "closed"
     queue.put((port, status))
 
 
 def process_queue():
-    """Drain the result queue and store results in the global dict."""
     while not queue.empty():
         port, status = queue.get()
         results[port] = status
 
 
 def scan_ports_multithreaded(host: str, start_port: int, end_port: int, max_threads: int = 100):
-    """
-    Launch multithreaded TCP scan over a port range.
-
-    Throttles thread creation to stay under max_threads at any time.
-    Processes the result queue after all threads complete.
-
-    Args:
-        host: Target host.
-        start_port: First port in range.
-        end_port: Last port in range (inclusive).
-        max_threads: Maximum concurrent threads (default: 100).
-    """
     global scan_running
     scan_running = True
     threads = []
@@ -155,9 +107,8 @@ def scan_ports_multithreaded(host: str, start_port: int, end_port: int, max_thre
 
     for i, port in enumerate(range(start_port, end_port + 1)):
         if not scan_running:
-            break  # Honour cancellation request
+            break
 
-        # Throttle: wait if too many threads are active
         while threading.active_count() > max_threads:
             pass
 
@@ -165,7 +116,6 @@ def scan_ports_multithreaded(host: str, start_port: int, end_port: int, max_thre
         threads.append(t)
         t.start()
 
-        # Update progress bar
         progress["value"] = int((i + 1) / total * 100)
         root.update_idletasks()
 
@@ -176,26 +126,21 @@ def scan_ports_multithreaded(host: str, start_port: int, end_port: int, max_thre
     scan_running = False
 
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 # Report Generation
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 
 def generate_report(scan_results: dict, show_closed: bool = False):
-    """
-    Render scan results into the report text area.
-
-    Args:
-        scan_results: Dict mapping port numbers to their status strings.
-        show_closed: If True, closed ports are included (default: False).
-    """
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     host = entry_host.get()
     resolved = resolve_host(host)
 
     lines = [
-        f"Port Scan Report - {timestamp}",
-        f"Target : {host} ({resolved})",
-        "=" * 50,
+        f"╔══ PORT SCAN REPORT ══════════════════════════════╗",
+        f"  Timestamp : {timestamp}",
+        f"  Target    : {host}",
+        f"  Resolved  : {resolved}",
+        f"╠══════════════════════════════════════════════════╣",
     ]
 
     open_ports = 0
@@ -203,21 +148,42 @@ def generate_report(scan_results: dict, show_closed: bool = False):
         status = scan_results[port]
         if status == "open":
             service = get_service_name(port)
-            lines.append(f"  [OPEN]   Port {port:>5}  -  {service}")
+            lines.append(f"  ▶  OPEN    {port:>5}/tcp   {service}")
             open_ports += 1
         elif show_closed:
-            lines.append(f"  [closed] Port {port:>5}")
+            lines.append(f"  ·  closed  {port:>5}/tcp")
 
-    lines += ["=" * 50, f"Summary: {open_ports} open port(s) found out of {len(scan_results)} scanned."]
+    lines += [
+        f"╠══════════════════════════════════════════════════╣",
+        f"  {open_ports} open port(s) found  /  {len(scan_results)} scanned",
+        f"╚══════════════════════════════════════════════════╝",
+    ]
 
     report_text.config(state=tk.NORMAL)
     report_text.delete(1.0, tk.END)
-    report_text.insert(tk.END, "\n".join(lines))
+
+    # Colour tags
+    report_text.tag_configure("open",    foreground=ACCENT)
+    report_text.tag_configure("closed",  foreground=TXT_DIM)
+    report_text.tag_configure("header",  foreground=ACCENT2)
+    report_text.tag_configure("summary", foreground="#f0a500")
+
+    for line in lines:
+        if "OPEN" in line:
+            report_text.insert(tk.END, line + "\n", "open")
+        elif "·  closed" in line:
+            report_text.insert(tk.END, line + "\n", "closed")
+        elif line.startswith("╔") or line.startswith("╚") or line.startswith("╠"):
+            report_text.insert(tk.END, line + "\n", "header")
+        elif "open port" in line:
+            report_text.insert(tk.END, line + "\n", "summary")
+        else:
+            report_text.insert(tk.END, line + "\n")
+
     report_text.config(state=tk.DISABLED)
 
 
 def export_report():
-    """Save the current report text to a .txt file chosen by the user."""
     content = report_text.get(1.0, tk.END).strip()
     if not content:
         messagebox.showwarning("Empty report", "No report to export yet.")
@@ -234,34 +200,23 @@ def export_report():
         messagebox.showinfo("Export", f"Report saved to:\n{filepath}")
 
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 # GUI Callbacks
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 
 def _launch_tcp_scan(host: str, start_port: int, end_port: int):
-    """
-    Internal helper: clear state, update UI and start the background scan thread.
-
-    Args:
-        host: Validated target host string.
-        start_port: First port to scan.
-        end_port: Last port to scan (inclusive).
-    """
     results.clear()
     report_text.config(state=tk.NORMAL)
     report_text.delete(1.0, tk.END)
     report_text.config(state=tk.DISABLED)
     progress["value"] = 0
 
-    # Disable scan buttons, enable Stop
     btn_scan_tcp.config(state=tk.DISABLED)
     btn_scan_all.config(state=tk.DISABLED)
     btn_stop.config(state=tk.NORMAL)
 
-    # Show scan scope in status label
-    lbl_status.config(text=f"Scanning {host}  ports {start_port}-{end_port}...")
+    lbl_status.config(text=f"⟳  Scanning {host}  [{start_port} → {end_port}]", fg=ACCENT)
 
-    # Choose thread count: more threads for large ranges (capped at 500)
     port_count = end_port - start_port + 1
     max_threads = min(500, max(100, port_count // 130))
 
@@ -274,16 +229,15 @@ def _launch_tcp_scan(host: str, start_port: int, end_port: int):
         btn_stop.config(state=tk.DISABLED)
         progress["value"] = 100
         open_count = sum(1 for s in results.values() if s == "open")
-        lbl_status.config(text=f"Done - {open_count} open port(s) found out of {len(results)} scanned.")
+        lbl_status.config(
+            text=f"✔  Done — {open_count} open / {len(results)} scanned",
+            fg=ACCENT
+        )
 
     threading.Thread(target=run, daemon=True).start()
 
 
 def scan_tcp():
-    """
-    Validate manual port-range inputs and launch a TCP scan.
-    Called by the ' Scan TCP' button.
-    """
     host = entry_host.get().strip()
     start_str = entry_start_port.get().strip()
     end_str = entry_end_port.get().strip()
@@ -310,11 +264,6 @@ def scan_tcp():
 
 
 def scan_all_ports():
-    """
-    Scan the full TCP port space (0-65535).
-    Called by the ' Scan ALL ports' button.
-    Asks for confirmation because scanning 65 536 ports takes time.
-    """
     host = entry_host.get().strip()
     if not host:
         messagebox.showerror("Error", "Please enter a target host or IP address.")
@@ -329,7 +278,6 @@ def scan_all_ports():
     if not confirm:
         return
 
-    # Pre-fill the range fields for visibility
     entry_start_port.delete(0, tk.END)
     entry_start_port.insert(0, "0")
     entry_end_port.delete(0, tk.END)
@@ -339,13 +287,6 @@ def scan_all_ports():
 
 
 def set_preset(start: int, end: int):
-    """
-    Fill the port range fields with a preset and trigger a TCP scan.
-
-    Args:
-        start: Start port of the preset range.
-        end: End port of the preset range.
-    """
     entry_start_port.delete(0, tk.END)
     entry_start_port.insert(0, str(start))
     entry_end_port.delete(0, tk.END)
@@ -358,14 +299,13 @@ def set_preset(start: int, end: int):
 
 
 def stop_scan():
-    """Request cancellation of the running scan."""
     global scan_running
     scan_running = False
     btn_stop.config(state=tk.DISABLED)
+    lbl_status.config(text="⚠  Scan aborted by user.", fg=RED_STOP)
 
 
 def scan_udp():
-    """Validate input and perform a UDP probe on a single port."""
     host = entry_host.get().strip()
     udp_str = entry_udp_port.get().strip()
 
@@ -384,126 +324,264 @@ def scan_udp():
 
 
 def create_report():
-    """Re-render the report from current results (useful after toggling options)."""
     if not results:
         messagebox.showwarning("No data", "Run a scan first.")
         return
     generate_report(results, show_closed=var_show_closed.get())
 
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
+# Helper: styled widgets
+# ─────────────────────────────────────────────
+
+def styled_entry(parent, width=20, **kw):
+    e = tk.Entry(
+        parent, width=width,
+        bg=ENTRY_BG, fg=TXT_MAIN,
+        insertbackground=ACCENT,
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+        highlightcolor=ACCENT,
+        font=FONT_UI,
+        **kw,
+    )
+    return e
+
+
+def styled_label(parent, text, dim=False, **kw):
+    return tk.Label(
+        parent, text=text,
+        bg=BG_PANEL,
+        fg=TXT_DIM if dim else TXT_MAIN,
+        font=FONT_LABEL,
+        **kw,
+    )
+
+
+def styled_button(parent, text, cmd, color=ACCENT, width=16, state=tk.NORMAL):
+    """Flat button with coloured foreground / dark background."""
+    btn = tk.Button(
+        parent, text=text, command=cmd,
+        width=width,
+        bg="#1a2235", fg=color,
+        activebackground="#243050", activeforeground=color,
+        relief=tk.FLAT,
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=color,
+        font=FONT_LABEL,
+        cursor="hand2",
+        state=state,
+        pady=5,
+    )
+    return btn
+
+
+def styled_labelframe(parent, text):
+    return tk.LabelFrame(
+        parent, text=f"  {text}  ",
+        bg=BG_PANEL,
+        fg=ACCENT,
+        font=FONT_LABEL,
+        bd=1,
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+        padx=10, pady=6,
+    )
+
+
+# ─────────────────────────────────────────────
 # GUI Layout
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 
 root = tk.Tk()
-root.title("Port Scanner v2.1")
+root.title("PORT SCANNER  v2.1")
 root.resizable(True, True)
+root.configure(bg=BG_DARK)
+root.minsize(640, 680)
 
-# -- Simple frame, no canvas, no blank space
-inner = tk.Frame(root)
-inner.pack(fill=tk.BOTH, expand=True)
+# ── ttk style for progressbar ──
+style = ttk.Style()
+style.theme_use("default")
+style.configure(
+    "Cyber.Horizontal.TProgressbar",
+    troughcolor=ENTRY_BG,
+    background=ACCENT,
+    darkcolor=ACCENT,
+    lightcolor=ACCENT,
+    bordercolor=BORDER,
+    thickness=6,
+)
 
-PAD = {"padx": 8, "pady": 3}
+PAD = {"padx": 10, "pady": 4}
 
-# -- Target frame
-frame_target = tk.LabelFrame(inner, text="Target", padx=8, pady=4)
-frame_target.grid(row=0, column=0, columnspan=2, sticky="ew", **PAD)
+# ── Top title bar ──
+title_bar = tk.Frame(root, bg=BG_MID, pady=8)
+title_bar.pack(fill=tk.X, side=tk.TOP)
 
-tk.Label(frame_target, text="Host / IP :").grid(row=0, column=0, sticky="w")
-entry_host = tk.Entry(frame_target, width=30)
-entry_host.grid(row=0, column=1, sticky="ew", padx=4)
+tk.Label(
+    title_bar,
+    text="▐ PORT SCANNER v2.1",
+    bg=BG_MID, fg=ACCENT,
+    font=FONT_TITLE,
+).pack(side=tk.LEFT, padx=16)
 
-tk.Label(frame_target, text="Timeout (s) :").grid(row=1, column=0, sticky="w")
-entry_timeout = tk.Entry(frame_target, width=6)
+tk.Label(
+    title_bar,
+    text="TCP · UDP · Multithreaded",
+    bg=BG_MID, fg=TXT_DIM,
+    font=("Consolas", 8),
+).pack(side=tk.LEFT)
+
+# ── Main scrollable container ──
+inner = tk.Frame(root, bg=BG_DARK)
+inner.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+# ── Target frame ──
+frame_target = styled_labelframe(inner, "TARGET")
+frame_target.pack(fill=tk.X, **PAD)
+
+styled_label(frame_target, "Host / IP :").grid(row=0, column=0, sticky="w", pady=2)
+entry_host = styled_entry(frame_target, width=34)
+entry_host.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=2)
+
+styled_label(frame_target, "Timeout (s) :").grid(row=1, column=0, sticky="w", pady=2)
+entry_timeout = styled_entry(frame_target, width=7)
 entry_timeout.insert(0, "1.0")
-entry_timeout.grid(row=1, column=1, sticky="w", padx=4)
+entry_timeout.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=2)
 
-# -- TCP frame
-frame_tcp = tk.LabelFrame(inner, text="TCP Scan", padx=8, pady=4)
-frame_tcp.grid(row=1, column=0, columnspan=2, sticky="ew", **PAD)
+frame_target.columnconfigure(1, weight=1)
 
-tk.Label(frame_tcp, text="Start port :").grid(row=0, column=0, sticky="w")
-entry_start_port = tk.Entry(frame_tcp, width=8)
-entry_start_port.grid(row=0, column=1, sticky="w", padx=4)
+# ── TCP frame ──
+frame_tcp = styled_labelframe(inner, "TCP SCAN")
+frame_tcp.pack(fill=tk.X, **PAD)
 
-tk.Label(frame_tcp, text="End port :").grid(row=1, column=0, sticky="w")
-entry_end_port = tk.Entry(frame_tcp, width=8)
-entry_end_port.grid(row=1, column=1, sticky="w", padx=4)
+styled_label(frame_tcp, "Start port :").grid(row=0, column=0, sticky="w", pady=2)
+entry_start_port = styled_entry(frame_tcp, width=9)
+entry_start_port.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=2)
 
-# -- Preset range buttons
-frame_presets = tk.Frame(frame_tcp)
-frame_presets.grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+styled_label(frame_tcp, "End port :").grid(row=1, column=0, sticky="w", pady=2)
+entry_end_port = styled_entry(frame_tcp, width=9)
+entry_end_port.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=2)
 
-tk.Label(frame_presets, text="Presets :").pack(side=tk.LEFT)
+# Presets
+frame_presets = tk.Frame(frame_tcp, bg=BG_PANEL)
+frame_presets.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 2))
+
+styled_label(frame_presets, "Presets :").pack(side=tk.LEFT, padx=(0, 6))
 
 PRESETS = [
-    ("Well-known (0-1023)",     0,     1023),
-    ("Registered (1024-49151)", 1024, 49151),
-    ("Dynamic (49152-65535)",   49152, 65535),
-    ("Common (20-443)",         20,    443),
+    ("0-1023",        0,     1023),
+    ("1024-49151",    1024,  49151),
+    ("49152-65535",   49152, 65535),
+    ("Common 20-443", 20,    443),
 ]
 for label, s, e in PRESETS:
-    tk.Button(
-        frame_presets, text=label, font=("TkDefaultFont", 8),
-        command=lambda s=s, e=e: set_preset(s, e)
-    ).pack(side=tk.LEFT, padx=2)
+    btn = tk.Button(
+        frame_presets, text=label,
+        font=("Consolas", 8),
+        bg=ENTRY_BG, fg=TXT_DIM,
+        activebackground="#243050", activeforeground=ACCENT,
+        relief=tk.FLAT, bd=0,
+        highlightthickness=1, highlightbackground=BORDER,
+        cursor="hand2", padx=6, pady=3,
+        command=lambda s=s, e=e: set_preset(s, e),
+    )
+    btn.pack(side=tk.LEFT, padx=3)
 
 var_show_closed = tk.BooleanVar(value=False)
-tk.Checkbutton(frame_tcp, text="Show closed ports", variable=var_show_closed).grid(
-    row=3, column=0, columnspan=3, sticky="w"
+chk = tk.Checkbutton(
+    frame_tcp, text="Show closed ports",
+    variable=var_show_closed,
+    bg=BG_PANEL, fg=TXT_DIM,
+    selectcolor=ENTRY_BG,
+    activebackground=BG_PANEL,
+    activeforeground=ACCENT,
+    font=FONT_UI,
 )
+chk.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
-# -- UDP frame
-frame_udp = tk.LabelFrame(inner, text="UDP Scan (single port)", padx=8, pady=4)
-frame_udp.grid(row=2, column=0, columnspan=2, sticky="ew", **PAD)
+# ── UDP frame ──
+frame_udp = styled_labelframe(inner, "UDP SCAN  (single port)")
+frame_udp.pack(fill=tk.X, **PAD)
 
-tk.Label(frame_udp, text="UDP port :").grid(row=0, column=0, sticky="w")
-entry_udp_port = tk.Entry(frame_udp, width=8)
-entry_udp_port.grid(row=0, column=1, sticky="w", padx=4)
+styled_label(frame_udp, "UDP port :").grid(row=0, column=0, sticky="w")
+entry_udp_port = styled_entry(frame_udp, width=9)
+entry_udp_port.grid(row=0, column=1, sticky="w", padx=(8, 0))
 
-# -- Status label
-lbl_status = tk.Label(inner, text="Ready.", anchor="w", fg="#555555")
-lbl_status.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8)
+# ── Status label ──
+lbl_status = tk.Label(
+    inner, text="●  READY",
+    anchor="w",
+    bg=BG_DARK, fg=TXT_DIM,
+    font=("Consolas", 9),
+)
+lbl_status.pack(fill=tk.X, padx=12, pady=(4, 0))
 
-# -- Progress bar
-progress = ttk.Progressbar(inner, orient="horizontal", length=400, mode="determinate")
-progress.grid(row=4, column=0, columnspan=2, **PAD)
+# ── Progress bar ──
+progress = ttk.Progressbar(
+    inner, orient="horizontal",
+    mode="determinate",
+    style="Cyber.Horizontal.TProgressbar",
+)
+progress.pack(fill=tk.X, padx=10, pady=(2, 6))
 
-# -- Report area (shorter height to leave room for buttons)
-report_text = tk.Text(inner, height=10, width=58, state=tk.DISABLED,
-                      bg="#1e1e1e", fg="#d4d4d4", font=("Courier New", 9))
-scrollbar_report = ttk.Scrollbar(inner, orient="vertical", command=report_text.yview)
+# ── Report area ──
+frame_report = styled_labelframe(inner, "REPORT")
+frame_report.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+
+report_text = tk.Text(
+    frame_report, height=12, width=60,
+    state=tk.DISABLED,
+    bg="#060a0f", fg=TXT_MAIN,
+    font=FONT_MONO,
+    relief=tk.FLAT,
+    insertbackground=ACCENT,
+    selectbackground=ACCENT2,
+    selectforeground="#ffffff",
+    bd=0,
+)
+scrollbar_report = ttk.Scrollbar(frame_report, orient="vertical", command=report_text.yview)
 report_text.configure(yscrollcommand=scrollbar_report.set)
-report_text.grid(row=5, column=0, sticky="nsew", **PAD)
-scrollbar_report.grid(row=5, column=1, sticky="ns", pady=3)
+report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+scrollbar_report.pack(side=tk.RIGHT, fill=tk.Y)
 
-# -- Button row
-frame_btns = tk.Frame(inner)
-frame_btns.grid(row=6, column=0, columnspan=2, pady=6)
+# ── Button row ──
+frame_btns = tk.Frame(inner, bg=BG_DARK)
+frame_btns.pack(pady=8)
 
-btn_scan_tcp = tk.Button(frame_btns, text="Scan TCP", command=scan_tcp, width=16, bg="#0078d4", fg="white")
-btn_scan_tcp.grid(row=0, column=0, padx=4, pady=2)
+btn_scan_tcp = styled_button(frame_btns, "▶  Scan TCP", scan_tcp, color=ACCENT, width=16)
+btn_scan_tcp.grid(row=0, column=0, padx=5, pady=3)
 
-btn_scan_all = tk.Button(
-    frame_btns, text="Scan ALL ports (0-65535)",
-    command=scan_all_ports, width=26, bg="#6a0dad", fg="white"
+btn_scan_all = styled_button(
+    frame_btns, "▶▶  Scan ALL (0-65535)",
+    scan_all_ports, color=ACCENT2, width=24
 )
-btn_scan_all.grid(row=0, column=1, padx=4, pady=2)
+btn_scan_all.grid(row=0, column=1, padx=5, pady=3)
 
-btn_stop = tk.Button(frame_btns, text="Stop", command=stop_scan, width=10, state=tk.DISABLED)
-btn_stop.grid(row=0, column=2, padx=4, pady=2)
+btn_stop = styled_button(frame_btns, "■  Stop", stop_scan, color=RED_STOP, width=10, state=tk.DISABLED)
+btn_stop.grid(row=0, column=2, padx=5, pady=3)
 
-btn_scan_udp = tk.Button(frame_btns, text="Scan UDP", command=scan_udp, width=16)
-btn_scan_udp.grid(row=1, column=0, padx=4, pady=2)
+btn_scan_udp = styled_button(frame_btns, "▶  Scan UDP", scan_udp, color="#f0a500", width=16)
+btn_scan_udp.grid(row=1, column=0, padx=5, pady=3)
 
-btn_report = tk.Button(frame_btns, text="Refresh report", command=create_report, width=16)
-btn_report.grid(row=1, column=1, padx=4, pady=2)
+btn_report = styled_button(frame_btns, "⟳  Refresh report", create_report, color=TXT_DIM, width=18)
+btn_report.grid(row=1, column=1, padx=5, pady=3)
 
-btn_export = tk.Button(frame_btns, text="Export .txt", command=export_report, width=14)
-btn_export.grid(row=1, column=2, padx=4, pady=2)
+btn_export = styled_button(frame_btns, "↓  Export .txt", export_report, color=TXT_DIM, width=14)
+btn_export.grid(row=1, column=2, padx=5, pady=3)
 
-btn_quit = tk.Button(frame_btns, text="Quit", command=root.quit, width=10, bg="#c0392b", fg="white")
-btn_quit.grid(row=1, column=3, padx=4, pady=2)
+btn_quit = styled_button(frame_btns, "✕  Quit", root.quit, color=RED_STOP, width=10)
+btn_quit.grid(row=1, column=3, padx=5, pady=3)
 
-# -- Launch
+# ── Footer ──
+tk.Label(
+    inner,
+    text="Use responsibly — only scan systems you are authorised to test.",
+    bg=BG_DARK, fg="#2a3550",
+    font=("Consolas", 7),
+).pack(side=tk.BOTTOM, pady=(0, 4))
+
 root.mainloop()

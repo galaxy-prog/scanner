@@ -32,7 +32,7 @@ See requirements.txt for the full list.
 ## Installation
 
 ```bash
-git clone https://github.com/your-username/port-scanner.git
+git clone https://github.com/galaxy-prog/port-scanner.git
 cd port-scanner
 python port_scanner.py
 ```
